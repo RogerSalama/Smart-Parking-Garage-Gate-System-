@@ -390,6 +390,21 @@
               <FileType>1</FileType>
               <FilePath>.\main.c</FilePath>
             </File>
+            <File>
+              <FileName>gate_control.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\gate_control.h</FilePath>
+            </File>
+            <File>
+              <FileName>gate_control.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\gate_control.c</FilePath>
+            </File>
+            <File>
+              <FileName>safety_task.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\safety_task.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>

@@ -3,6 +3,8 @@
 #include "task.h"
 #include "queue.h"
 #include "semphr.h"
+#include <stdbool.h>
+#include "gate_control.h"
 
 /* * ===========================================================
  * TM4C123 Register Definitions (Direct Access)
@@ -108,28 +110,14 @@
 
 #define TOTAL_BUTTONS 7
 
-typedef enum {
-    BTN_OPEN = 0,
-    BTN_CLOSE = 1,
-    BTN_LIMIT_OPEN = 2,
-    BTN_LIMIT_CLOSED = 3,
-    BTN_OBSTACLE = 4,
-    BTN_SECURITY_OPEN = 5,
-    BTN_SECURITY_CLOSE = 6
-} ButtonID_t;
+QueueHandle_t xButtonEventQueue;
+SemaphoreHandle_t xGateStateMutex;
+SemaphoreHandle_t xInputReadySemaphore;
+SemaphoreHandle_t xObstacleSemaphore;QueueHandle_t xButtonEventQueue;
+SemaphoreHandle_t xGateStateMutex;
+SemaphoreHandle_t xInputReadySemaphore;
+SemaphoreHandle_t xObstacleSemaphore;
 
-typedef enum {
-    PRESS,
-    RELEASE
-} KeyEvent_t;
-
-typedef struct {
-    ButtonID_t button;
-    KeyEvent_t event;
-} ButtonMsg_t;
-
-extern QueueHandle_t xButtonEventQueue;
-extern SemaphoreHandle_t xInputReadySemaphore;
 
 uint32_t ReadAllButtons(void);
 
@@ -180,29 +168,29 @@ static void GPIO_Init(void)
 		
 		// 1. Port F (PF4) - Falling Edge (Active Low button)
     GPIO_PORTF_IS_R  &= ~BTN_PF4;     // Edge sensitive
-    GPIO_PORTF_IBE_R &= ~BTN_PF4;     // Not both edges
-    GPIO_PORTF_IEV_R &= ~BTN_PF4;     // Falling edge
+    GPIO_PORTF_IBE_R |=  BTN_PF4;     // both edges
+    //GPIO_PORTF_IEV_R &= ~BTN_PF4;     // Falling edge
     GPIO_PORTF_ICR_R  =  BTN_PF4;     // Clear prior flags
     GPIO_PORTF_IM_R  |=  BTN_PF4;     // Unmask interrupt
 
     // 2. Port E (PE0, PE1) - Rising Edge (Active High)
     GPIO_PORTE_IS_R  &= ~(BTN_PE0 | BTN_PE1);
-    GPIO_PORTE_IBE_R &= ~(BTN_PE0 | BTN_PE1);
-    GPIO_PORTE_IEV_R |=  (BTN_PE0 | BTN_PE1); // Rising edge
+    GPIO_PORTE_IBE_R |= (BTN_PE0 | BTN_PE1);
+    //GPIO_PORTE_IEV_R |=  (BTN_PE0 | BTN_PE1); // Rising edge
     GPIO_PORTE_ICR_R  =  (BTN_PE0 | BTN_PE1);
     GPIO_PORTE_IM_R  |=  (BTN_PE0 | BTN_PE1);
 
     // 3. Port B (PB0, PB1) - Rising Edge (Active High)
     GPIO_PORTB_IS_R  &= ~(BTN_PB0 | BTN_PB1);
-    GPIO_PORTB_IBE_R &= ~(BTN_PB0 | BTN_PB1);
-    GPIO_PORTB_IEV_R |=  (BTN_PB0 | BTN_PB1);
+    GPIO_PORTB_IBE_R |=  (BTN_PB0 | BTN_PB1);
+    //GPIO_PORTB_IEV_R |=  (BTN_PB0 | BTN_PB1);
     GPIO_PORTB_ICR_R  =  (BTN_PB0 | BTN_PB1);
     GPIO_PORTB_IM_R  |=  (BTN_PB0 | BTN_PB1);
 
     // 4. Port D (PD0, PD1) - Rising Edge (Active High)
     GPIO_PORTD_IS_R  &= ~(BTN_PD0 | BTN_PD1);
-    GPIO_PORTD_IBE_R &= ~(BTN_PD0 | BTN_PD1);
-    GPIO_PORTD_IEV_R |=  (BTN_PD0 | BTN_PD1);
+    GPIO_PORTD_IBE_R |=  (BTN_PD0 | BTN_PD1);
+    //GPIO_PORTD_IEV_R |=  (BTN_PD0 | BTN_PD1);
     GPIO_PORTD_ICR_R  =  (BTN_PD0 | BTN_PD1);
     GPIO_PORTD_IM_R  |=  (BTN_PD0 | BTN_PD1);
 
@@ -219,16 +207,20 @@ static inline uint32_t Btn_PB1(void) { return (GPIO_PORTB_DATA_R & BTN_PB1) != 0
 static inline uint32_t Btn_PD0(void) { return (GPIO_PORTD_DATA_R & BTN_PD0) != 0; }
 static inline uint32_t Btn_PD1(void) { return (GPIO_PORTD_DATA_R & BTN_PD1) != 0; }
 
-static void LED_Set(uint32_t color_mask)
+
+#define OBSTACLE_MASK        (1U << 0)
+#define LIMIT_OPEN_MASK      (1U << 1)
+#define LIMIT_CLOSED_MASK    (1U << 2)
+#define SEC_OPEN_MASK        (1U << 3)
+#define SEC_CLOSE_MASK       (1U << 4)
+#define DRIVER_OPEN_MASK     (1U << 5)
+#define DRIVER_CLOSE_MASK    (1U << 6)
+
+void LED_Set(uint32_t color_mask)
 {
     GPIO_PORTF_DATA_R = (GPIO_PORTF_DATA_R & ~LED_MASK) | (color_mask & LED_MASK);
 }
 
-static void Delay_ms(uint32_t ms)
-{
-    volatile uint32_t i;
-    while (ms--) { for (i = 0; i < 4000; i++) { } }
-}
 
 void GPIOF_Handler(void) {
     // Initialized to pdFALSE. If giving the semaphore unblocks a 
@@ -286,30 +278,90 @@ void GPIOPortE_Handler(void) {
 
 void inputTask(void *pvParameters)
 {
-	uint32_t last_states = 0;
-  ButtonMsg_t msg;
-	
-	for (;;) {
-        // Wait here until a handler signals an event
-        if (xSemaphoreTake(xInputReadySemaphore, portMAX_DELAY) == pdPASS) {
-            
-            vTaskDelay(pdMS_TO_TICKS(20)); // Debounce
-            
-            uint32_t current_states = ReadAllButtons();
-            
-            // Detect transitions (Edges)
-						for (int i = 0; i < TOTAL_BUTTONS; i++) {
-								uint32_t mask = (1 << i);
-								if ((current_states & mask) != (last_states & mask)) {
-										msg.button = (ButtonID_t)i;
-										msg.event = (current_states & mask) ? PRESS : RELEASE;
+    uint32_t physical_last_states = 0; // Tracks the actual physical buttons
+    TickType_t press_times[TOTAL_BUTTONS] = {0};
+    ButtonMsg_t msg;
 
-										// Send clean event to Gate Control Task via Queue
-										xQueueSend(xButtonEventQueue, &msg, portMAX_DELAY);
-								}
-						}
-								last_states = current_states;
-					}
+    for (;;) {
+        if (xSemaphoreTake(xInputReadySemaphore, portMAX_DELAY) == pdPASS) {
+            vTaskDelay(pdMS_TO_TICKS(50)); 
+            
+            uint32_t physical_current_states = ReadAllButtons();
+            
+            // Create a temporary copy to apply "Discard" logic
+            uint32_t filtered_states = physical_current_states;
+						bool sec_conflict = ((filtered_states & SEC_OPEN_MASK) && (filtered_states & SEC_CLOSE_MASK));
+            bool drv_conflict = ((filtered_states & DRIVER_OPEN_MASK) && (filtered_states & DRIVER_CLOSE_MASK));
+            static bool conflict_active = false;
+
+						if (filtered_states & OBSTACLE_MASK) {
+                filtered_states &= OBSTACLE_MASK; 
+            }
+						
+            else if (sec_conflict || drv_conflict) {
+                // 1. Send an explicit STOP message to the queue
+                // We use a check to ensure we only send this once per conflict event
+                if (!conflict_active) {
+                    msg.button = (sec_conflict) ? BTN_SECURITY_OPEN : BTN_OPEN;
+                    msg.event = EVENT_CONFLICT_STOP; // You must define this in your enum
+                    xQueueSend(xButtonEventQueue, &msg, 0);
+                    conflict_active = true;
+                }
+                
+                // 2. Clear these buttons from filtered_states so the edge detector 
+                // doesn't process them as normal "Press" events.
+                filtered_states &= 0;
+            } 
+						
+						else if(!sec_conflict && !drv_conflict){
+                conflict_active = false;
+            }
+						
+            else if (filtered_states & (LIMIT_OPEN_MASK | LIMIT_CLOSED_MASK)) {
+                filtered_states &= (LIMIT_OPEN_MASK | LIMIT_CLOSED_MASK);
+            }
+						
+            else if (filtered_states & (SEC_OPEN_MASK | SEC_CLOSE_MASK)) {
+                filtered_states &= (SEC_OPEN_MASK | SEC_CLOSE_MASK);
+            }
+
+            // --- 2. EDGE DETECTION (Using physical states for tracking) ---
+            for (int i = 0; i < TOTAL_BUTTONS; i++) {
+                uint32_t mask = (1U << i);
+                
+                // Compare the PHYSICAL change
+                if ((physical_current_states & mask) != (physical_last_states & mask)) {
+									
+									// --- NEW: OBSTACLE INTERCEPT ---
+                    if (i == BTN_OBSTACLE) {
+                        if (physical_current_states & mask) {
+                            // Wake up the Highest Priority Safety Task immediately
+                            xSemaphoreGive(xObstacleSemaphore);
+                        }
+                        continue; // Skip the standard queue logic for the obstacle button
+                    }
+                    
+                    // ONLY send to queue if this button survived the "Filter/Discard" check
+                    if (filtered_states & mask || !(physical_current_states & mask)) {
+                        msg.button = (ButtonID_t)i;
+
+                        if (physical_current_states & mask) {
+                            msg.event = EVENT_PRESSED;
+                            press_times[i] = xTaskGetTickCount();
+                            xQueueSend(xButtonEventQueue, &msg, 0);
+                        } else {
+                            TickType_t duration = xTaskGetTickCount() - press_times[i];
+                            msg.event = (duration < pdMS_TO_TICKS(500)) ? 
+                                         EVENT_RELEASE_SHORT_AUTO : EVENT_RELEASE_LONG_STOP;
+                            xQueueSend(xButtonEventQueue, &msg, 0);
+                        }
+                    }
+                }
+            }
+
+            // --- 3. THE KEY: Save the physical state, NOT the filtered state ---
+            physical_last_states = physical_current_states;
+        }
     }
 }
 
@@ -336,6 +388,8 @@ uint32_t ReadAllButtons(void) {
 
 int main(void)
 {
+	
+	
     static const uint32_t color_tbl[7] = {
         LED_RED,                                    /* PF4 */
         LED_BLUE,                                   /* PE0 */
@@ -347,6 +401,33 @@ int main(void)
     };
 
     GPIO_Init();
+		
+		// 2. Create RTOS Objects
+    xButtonEventQueue = xQueueCreate(10, sizeof(ButtonMsg_t));
+    xGateStateMutex = xSemaphoreCreateMutex();
+    xInputReadySemaphore = xSemaphoreCreateBinary();
+    xObstacleSemaphore = xSemaphoreCreateBinary(); 
+		
+		if (xButtonEventQueue != NULL && xGateStateMutex != NULL && 
+        xInputReadySemaphore != NULL && xObstacleSemaphore != NULL) 
+    {
+        // 3. Create Tasks with strict priority assignments
+        
+        // Safety Task: Highest Priority
+        xTaskCreate(safetyTask,  "Safety", 256, NULL, 4, NULL);
+
+        // Input Task: High Priority 
+        xTaskCreate(inputTask, "Input", 256, NULL, 3, NULL);
+
+        // Gate Control Task: Medium Priority 
+        xTaskCreate(gateControlTask, "GateCtrl",  256, NULL, 2, NULL);
+
+        // LED Control Task: Medium Priority 
+        xTaskCreate(ledControlTask, "LEDTask", 128,  NULL, 2, NULL);
+			
+		// Start the Scheduler
+    vTaskStartScheduler();
+		}
 
 		while (1);
 }
