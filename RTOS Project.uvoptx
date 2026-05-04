@@ -185,7 +185,7 @@
         <SetRegEntry>
           <Number>0</Number>
           <Key>DLGDARM</Key>
-          <Name>(1010=-1,-1,-1,-1,0)(1007=-1,-1,-1,-1,0)(1008=-1,-1,-1,-1,0)(1009=-1,-1,-1,-1,0)(1012=-1,-1,-1,-1,0)(9108=-1,-1,-1,-1,0)(9106=-1,-1,-1,-1,0)(9104=180,121,586,402,0)(9107=654,55,1117,336,1)(9102=1111,57,1517,341,1)</Name>
+          <Name>(1010=-1,-1,-1,-1,0)(1007=-1,-1,-1,-1,0)(1008=-1,-1,-1,-1,0)(1009=-1,-1,-1,-1,0)(1012=-1,-1,-1,-1,0)(9108=-1,-1,-1,-1,0)(9106=-1,-1,-1,-1,0)(9104=180,121,586,402,0)(9107=682,81,1145,362,1)(9102=1111,57,1517,341,1)</Name>
         </SetRegEntry>
         <SetRegEntry>
           <Number>0</Number>
@@ -210,7 +210,27 @@
           <WinNumber>1</WinNumber>
           <ItemText>physical_current_states</ItemText>
         </Ww>
+        <Ww>
+          <count>2</count>
+          <WinNumber>1</WinNumber>
+          <ItemText>press_times</ItemText>
+        </Ww>
+        <Ww>
+          <count>3</count>
+          <WinNumber>1</WinNumber>
+          <ItemText>duration</ItemText>
+        </Ww>
+        <Ww>
+          <count>4</count>
+          <WinNumber>1</WinNumber>
+          <ItemText>msg</ItemText>
+        </Ww>
       </WatchWindow1>
+      <ScvdPack>
+        <Filename>D:\Programs\Packs\ARM\CMSIS-FreeRTOS\11.2.0\CMSIS\RTOS2\FreeRTOS\FreeRTOS.scvd</Filename>
+        <Type>ARM.CMSIS-FreeRTOS.11.2.0</Type>
+        <SubType>1</SubType>
+      </ScvdPack>
       <Tracepoint>
         <THDelay>0</THDelay>
       </Tracepoint>

@@ -375,7 +375,7 @@ void inputTask(void *pvParameters)
                             xQueueSend(xButtonEventQueue, &msg, 0);
                         } else {
                             TickType_t duration = xTaskGetTickCount() - press_times[i];
-                            msg.event = (duration < pdMS_TO_TICKS(5000)) ? 
+                            msg.event = (duration < pdMS_TO_TICKS(1000)) ? 
                                          EVENT_RELEASE_SHORT_AUTO : EVENT_RELEASE_LONG_STOP;
                             xQueueSend(xButtonEventQueue, &msg, 0);
                         }
